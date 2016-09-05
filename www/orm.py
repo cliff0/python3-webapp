@@ -64,6 +64,9 @@ class Model(dict,metaclass=ModelMetaclass):
         except KeyError:
             raise AttributeError(r"'Model' object has no attribute '%s'" %key)
 
+    def __getattr__(self,key,value):
+        self[key]=value
+
     def getValue(self,key):
         return getattr(self,key,None)
 
@@ -76,5 +79,63 @@ class Model(dict,metaclass=ModelMetaclass):
                 logging.debug('using default value for %s:%s' %(key ,str(value)))
                 setattr(self,key,value)
             return value
-            
+
+
+class Field(object):
+    
+    def __init__(self,name,column_type,primary_key,default):
+        self.name = name
+        self.column_type = column_type
+        self.primary_key = primary_key
+        self.default = default
+
+    def __str__(self):
+        return '<%s,%s:%s>' %(self.__class__.__name,self.column_type,self.name)
+
+
+class StringField(Field):
+
+    def __int__(self,name=None,primary_key=False,default=None,ddl='varvhar(100)'):
+        super().__int__(name,ddl,primary_key,default)
+
+
+class ModelMetaclass(type):
+
+    def __new__(cls,name,bases,attrs):
+        #排除Model类本身
+        if name=='Model':
+            return type.__new__(cls,name,bases,attrs)
+        #获取table名称
+        tableName = attrs.get('__table__',None) or name 
+        logging.info('found model :$s (table:%s)'%(name,tableName))
+        #获取所有的Field和主键名
+        mappings = dict()
+        fields = []
+        primarykey = None
+        for k,v in attrs.items():
+            if isinstance(v,Field):
+                logging.info(' found mapping:%s' % (k,v))
+                mappings[k] = v
+                if v.primary_key:
+                    #找到主键：
+                    if primarykey:
+                        raise RuntimeError('Dulplicate primary key for field:%s'%k)
+                    primarykey=k
+                else:
+                    fields.append(k)
+        if not primarykey:
+            raise RuntimeError('Primary key not found')
+        for k in mappings.keys():
+            attrs.pop(k)
+        escaped_fields = list(map(lambda f: '`%s`'%f,fields))
+        attrs['__mapping__'] = mappings #保留属性和列的映射关系
+        attrs['__table__'] = tableName
+        attrs['__primary_key__'] = primarykey #
+        attrs['__fields__'] = fields #
+        #
+        attrs['__select__'] = 'select `%s`,%s from `%s`' %(primarykey,', '.join(escaped_fields),tableName)
+        attrs['__insert__'] = 'insert into `%s` (%s, `%s`) values (%s)' %(ableName,', '.join(escaped_fields),primarykey,create_args_string(len(escaped_fields)+1))
+        attrs['__update__'] = 'update `%s` set %s where `%s`=?' %(tableName,', '.join(map(lambda f:'`%s`=?' %(mapp`.get(f).name or f),fields)),primarykey)
+        attrs['__delete__'] = 'delete from `%s` where `%s`=?' %(tableName,primarykey)
+        return type.__new__(cl,name,bases,attrs)
         
